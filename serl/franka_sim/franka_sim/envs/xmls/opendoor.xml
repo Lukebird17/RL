@@ -1,0 +1,96 @@
+<!-- <?xml version="1.0" encoding="utf-8"?> -->
+<mujoco model="opendoor">
+  <!-- 资产定义（网格、材质等） -->
+  <include file="panda.xml"/>
+  <!-- <include file="assets.xml"/> -->
+
+    
+
+  <!-- <extension>
+    <plugin plugin="mujoco.sdf.bowl">
+      <instance name="bowl">
+        <config key="height" value="0.4"/>
+        <config key="radius" value="1.0"/>
+        <config key="thickness" value="0.02"/>
+      </instance>
+    </plugin>
+  </extension> -->
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1=".3 .5 .7" rgb2="0 0 0" width="32" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <!-- <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1="0 0 0" rgb2="0 0 0"/> -->
+    <material name="grid" texture="grid" texrepeat="2 2" texuniform="true" reflectance="0"/>
+    <!-- <mesh name="bowl">
+      <plugin instance="bowl"/>
+    </mesh> -->
+    <texture type="cube" name="wood" file="textures/wood.png" />
+    <texture type="cube" name="foil" file="textures/silverRaw.png" />
+    <material name="MatFoil" texture="foil" specular="1" shininess="0.3" rgba="0.9 0.9 0.9 1" />
+    <material name="MatPlane" specular="0.3" shininess="0.3" rgba="0.3 0.3 0.2 1" />
+    <material name="MatWood" texture="wood" texrepeat="3 3" specular="0.4" shininess="0.1" />
+    <!-- <material name="MatSquare" texture="square" specular="1" shininess="0.6" rgba="0.8 0.8 0.8 1" />
+    <material name="MatWoodR" texture="wood" specular="1" shininess="0.3" rgba="1 0.5 0.5 1" /> -->
+  </asset>
+
+  <option timestep=".002" noslip_iterations="5" noslip_tolerance="0"/>
+
+  <statistic center="0.3 0 0.4" extent=".8" meansize=".1"/>
+
+  <!-- <default>
+    <geom solref="0.01 1" solimp=".95 .99 .0001" condim="1"/>
+  </default> -->
+
+  <visual>
+    <headlight diffuse=".4 .4 .4" ambient=".5 .5 .5"/>
+    <global azimuth="160" elevation="-20" offheight="128" offwidth="128"/>
+    <quality offsamples="8"/>
+  </visual>
+  <!-- 世界体定义 -->
+  <worldbody>
+    <!-- Franka机械臂 -->
+    <camera name="front" pos="1.3 0.0 0.7" quat="0.5963678 0.3799282 0.3799282 0.5963678" fovy="45"/>
+    <light pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular=".3 .3 .3"/>
+    <light pos="0 -.5 .4" mode="targetbodycom" target="frame" diffuse=".8 .8 .8" specular=".3 .3 .3"/>
+    <geom name="floor" size="3 3 0.01" type="plane" material="grid"/>
+
+
+    <body name="target" pos=".15 0 .5" quat="0 1 0 0" mocap="true">
+      <geom name="target" type="box" size=".03 .03 .03" contype="0" conaffinity="0" rgba=".6 .3 .3 0"/>
+    </body>
+
+    <!-- <body name="block" pos="0.35 0.1 .5">  <freejoint name="block"/>
+      <geom name="block" type="box" size=".02 .02 .02" mass="0.1" rgba=".6 .3 .6 1" contype="1" conaffinity="1" group="1"/>
+    </body> -->
+
+    <body name="frame" pos="0 0.4 0.447376" user="1001 0 2002 -0.4 -0.1 0.252 0 0.3 0.45">
+        <inertial pos="0.29 0 0" quat="0.5 0.5 0.5 0.5" mass="7.85398" diaginertia="0.923301 0.764585 0.168533" />
+        <geom size="0.05 0.25" pos="0.6 0 0" type="cylinder" material="MatWood" rgba="1 0 0 1" />
+        <geom size="0.05 0.25" pos="-0.02 0 0" type="cylinder" material="MatWood" rgba="1 0 0 1" />
+        <site name="S_handle_target" pos="0.75 -0.5 -.18" size="0.025" group='3'/>
+        <body name="door" pos="0.29 0 0">
+            <inertial pos="0.0296816 -0.00152345 0" quat="0.701072 0 0 0.713091" mass="2.43455" diaginertia="0.0913751 0.0521615 0.043714" />
+            <joint name="door_hinge" pos="0.31 0 0" axis="0 0 1" range="0 1.57" damping="1" frictionloss="2" />
+            <geom size="0.2 0.05 0.25" type="box" friction="1 1 1" material="MatWood" />
+            <geom size="0.05 0.25" pos="0.2 0 0" type="cylinder" material="MatWood" />
+            <geom size="0.05 0.25" pos="-0.2 0 0" type="cylinder" material="MatWood" />
+            <body name="latch" pos="-0.15 0 -0.025">
+                <inertial pos="-0.017762 0.0138544 0" quat="0.365653 0.605347 -0.36522 0.605365" mass="3.53743" diaginertia="0.0483771 0.0410001 0.0111013" />
+                <joint name="latch" pos="0 0 0" axis="0 1 0" range="0 1.8" frictionloss="5" />
+                <geom size="0.05 0.15" quat="0.707388 0.706825 0 0" type="cylinder" material="MatFoil" />
+                <geom size="0.02 0.1" pos="0.1 -0.15 0" quat="0.707388 0 0.706825 0" type="capsule" material="MatFoil" />
+                <geom size="0.04 0.07" pos="-0.1 0.1 0" quat="0.707388 0 0.706825 0" type="capsule" material="MatFoil" />
+                <site name="S_handle" pos="0.15 -0.15 0" size="0.025" group='3'/>
+            </body>
+        </body>
+    </body>
+    
+  </worldbody>
+
+  <sensor>
+    <!-- <framepos name="block_pos" objtype="geom" objname="block"/>
+    <framequat name="block_quat" objtype="geom" objname="block"/> -->
+    <framepos name="latch_pos" objtype="body" objname="latch"/>
+    <framequat name="latch" objtype="body" objname="latch"/>
+  </sensor>
+</mujoco>
