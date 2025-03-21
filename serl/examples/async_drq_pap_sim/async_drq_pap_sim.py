@@ -2,28 +2,38 @@
 
 import time
 from functools import partial
-
-import os
-import datetime
-import gym
 import jax
 import jax.numpy as jnp
 import numpy as np
 import tqdm
 from absl import app, flags
 from flax.training import checkpoints
+import cv2
+import os
 
-from agentlace.data.data_store import QueuedDataStore
-from agentlace.trainer import TrainerClient, TrainerServer
-from serl_launcher.utils.launcher import (
-    make_sac_agent,
-    make_replay_buffer,
-)
+import datetime
 
+from typing import Any, Dict, Optional
+import pickle as pkl
+import gym
 from gym.wrappers.record_episode_statistics import RecordEpisodeStatistics
-from serl_launcher.agents.continuous.sac import SACAgent
+
+from serl_launcher.agents.continuous.drq import DrQAgent
 from serl_launcher.common.evaluation import evaluate
 from serl_launcher.utils.timer_utils import Timer
+from serl_launcher.wrappers.chunking import ChunkingWrapper
+from serl_launcher.utils.train_utils import concat_batches
+
+from agentlace.trainer import TrainerServer, TrainerClient
+from agentlace.data.data_store import QueuedDataStore
+
+from serl_launcher.data.data_store import MemoryEfficientReplayBufferDataStore
+from serl_launcher.utils.launcher import (
+    make_drq_agent,
+    make_replay_buffer,
+)
+from serl_launcher.wrappers.serl_obs_wrappers import SERLObsWrapper
+
 from agentlace.trainer import TrainerConfig
 from serl_launcher.common.wandb import WandBLogger
 
@@ -31,22 +41,22 @@ import franka_sim
 
 now = datetime.datetime.now()
 date_time_str = now.strftime("%Y-%m-%d_%H-%M-%S")
-base_checkpoint_path = "/home/robot/SERL/serl/serl_checkpoints/pap_direct"
+base_checkpoint_path = "/home/robot/SERL/serl/serl_checkpoints/drq_pap"
 checkpoint_path = os.path.join(base_checkpoint_path, date_time_str)
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("env", "HalfCheetah-v4", "Name of environment.")
-flags.DEFINE_string("agent", "sac", "Name of agent.")
+flags.DEFINE_string("env", "PandaPAPVision", "Name of environment.")
+flags.DEFINE_string("agent", "drq", "Name of agent.")
 flags.DEFINE_string("exp_name", None, "Name of the experiment for wandb logging.")
-flags.DEFINE_integer("max_traj_length", 100, "Maximum length of trajectory.")
+flags.DEFINE_integer("max_traj_length", 1000, "Maximum length of trajectory.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_bool("save_model", True, "Whether to save model.")
 flags.DEFINE_integer("batch_size", 256, "Batch size.")
-flags.DEFINE_integer("critic_actor_ratio", 8, "critic to actor update ratio.")
+flags.DEFINE_integer("critic_actor_ratio", 4, "critic to actor update ratio.")
 
 flags.DEFINE_integer("max_steps", 1000000, "Maximum number of training steps.")
-flags.DEFINE_integer("replay_buffer_capacity", 1000000, "Replay buffer capacity.")
+flags.DEFINE_integer("replay_buffer_capacity", 200000, "Replay buffer capacity.")
 
 flags.DEFINE_integer("random_steps", 300, "Sample random actions for this many steps.")
 flags.DEFINE_integer("training_starts", 300, "Training starts after this step.")
@@ -61,6 +71,9 @@ flags.DEFINE_boolean("learner", False, "Is this a learner or a trainer.")
 flags.DEFINE_boolean("actor", False, "Is this a learner or a trainer.")
 flags.DEFINE_boolean("render", False, "Render the environment.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
+# "small" is a 4 layer convnet, "resnet" and "mobilenet" are frozen with pretrained weights
+flags.DEFINE_string("encoder_type", "resnet-pretrained", "Encoder type.")
+flags.DEFINE_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_integer("checkpoint_period", 50000, "Period to save checkpoints.")
 flags.DEFINE_string("checkpoint_path", checkpoint_path, "Path to save checkpoints.")
 
@@ -71,11 +84,15 @@ flags.DEFINE_boolean(
 flags.DEFINE_string("log_rlds_path", None, "Path to save RLDS logs.")
 flags.DEFINE_string("preload_rlds_path", None, "Path to preload RLDS data.")
 
+devices = jax.local_devices()
+num_devices = len(devices)
+sharding = jax.sharding.PositionalSharding(devices)
+
 
 def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
 
-def make_trainer_config(port_number: int = 5478, broadcast_port: int = 5479):
+def make_trainer_config(port_number: int = 5488, broadcast_port: int = 5489):
     return TrainerConfig(
         port_number=port_number,
         broadcast_port=broadcast_port,
@@ -84,8 +101,8 @@ def make_trainer_config(port_number: int = 5478, broadcast_port: int = 5479):
     )
 
 def make_wandb_logger(
-    project: str = "sac_pap_direct",
-    description: str = "serl_sac_pap_direct",
+    project: str = "sac_drq",
+    description: str = "serl_drq_pap",
     debug: bool = False,
 ):
     wandb_config = WandBLogger.get_default_config()
@@ -102,10 +119,11 @@ def make_wandb_logger(
         debug=debug,
     )
     return wandb_logger
+
 ##############################################################################
 
 
-def actor(agent: SACAgent, data_store, env, sampling_rng):
+def actor(agent: DrQAgent, data_store, env, sampling_rng):
     """
     This is the actor loop, which runs when "--actor" is set to True.
     """
@@ -125,9 +143,12 @@ def actor(agent: SACAgent, data_store, env, sampling_rng):
     client.recv_network_callback(update_params)
 
     eval_env = gym.make(FLAGS.env)
-    # if FLAGS.env == "PandaPickCube-v0":
-    #     eval_env = gym.wrappers.FlattenObservation(eval_env)
-    eval_env = gym.wrappers.FlattenObservation(eval_env)
+    # if FLAGS.env == "PandaPickCubeVision-v0":
+    #     eval_env = SERLObsWrapper(eval_env)
+    #     eval_env = ChunkingWrapper(eval_env, obs_horizon=1, act_exec_horizon=None)
+
+    eval_env = SERLObsWrapper(eval_env)
+    eval_env = ChunkingWrapper(eval_env, obs_horizon=1, act_exec_horizon=None)
     eval_env = RecordEpisodeStatistics(eval_env)
 
     obs, _ = env.reset()
@@ -136,6 +157,7 @@ def actor(agent: SACAgent, data_store, env, sampling_rng):
     # training loop
     timer = Timer()
     running_return = 0.0
+
     for step in tqdm.tqdm(range(FLAGS.max_steps), dynamic_ncols=True):
         timer.tick("total")
 
@@ -155,29 +177,23 @@ def actor(agent: SACAgent, data_store, env, sampling_rng):
         with timer.context("step_env"):
 
             next_obs, reward, done, truncated, info = env.step(actions)
-            next_obs = np.asarray(next_obs, dtype=np.float32)
             reward = np.asarray(reward, dtype=np.float32)
-
+            info = np.asarray(info)
             running_return += reward
-
-            data_store.insert(
-                dict(
-                    observations=obs,
-                    actions=actions,
-                    next_observations=next_obs,
-                    rewards=reward,
-                    masks=1.0 - done,
-                    dones=done or truncated,
-                )
+            transition = dict(
+                observations=obs,
+                actions=actions,
+                next_observations=next_obs,
+                rewards=reward,
+                masks=1.0 - done,
+                dones=done or truncated,
             )
+            data_store.insert(transition)
 
             obs = next_obs
             if done or truncated:
                 running_return = 0.0
                 obs, _ = env.reset()
-
-        if FLAGS.render:
-            env.render()
 
         if step % FLAGS.steps_per_update == 0:
             client.update()
@@ -202,7 +218,12 @@ def actor(agent: SACAgent, data_store, env, sampling_rng):
 ##############################################################################
 
 
-def learner(rng, agent: SACAgent, replay_buffer, replay_iterator):
+def learner(
+    rng,
+    agent: DrQAgent,
+    replay_buffer: MemoryEfficientReplayBufferDataStore,
+    demo_buffer: Optional[MemoryEfficientReplayBufferDataStore] = None,
+):
     """
     The learner loop, which runs when "--learner" is set to True.
     """
@@ -246,6 +267,30 @@ def learner(rng, agent: SACAgent, replay_buffer, replay_iterator):
     server.publish_network(agent.state.params)
     print_green("sent initial network to actor")
 
+    # 50/50 sampling from RLPD, half from demo and half from online experience if
+    # demo_buffer is provided
+    if demo_buffer is None:
+        single_buffer_batch_size = FLAGS.batch_size
+        demo_iterator = None
+    else:
+        single_buffer_batch_size = FLAGS.batch_size // 2
+        demo_iterator = demo_buffer.get_iterator(
+            sample_args={
+                "batch_size": single_buffer_batch_size,
+                "pack_obs_and_next_obs": True,
+            },
+            device=sharding.replicate(),
+        )
+
+    # create replay buffer iterator
+    replay_iterator = replay_buffer.get_iterator(
+        sample_args={
+            "batch_size": single_buffer_batch_size,
+            "pack_obs_and_next_obs": True,
+        },
+        device=sharding.replicate(),
+    )
+
     # wait till the replay buffer is filled with enough data
     timer = Timer()
 
@@ -257,15 +302,36 @@ def learner(rng, agent: SACAgent, replay_buffer, replay_iterator):
     )
 
     for step in tqdm.tqdm(range(FLAGS.max_steps), dynamic_ncols=True, desc="learner"):
-        # Train the networks
-        with timer.context("sample_replay_buffer"):
-            batch = next(replay_iterator)
+        # run n-1 critic updates and 1 critic + actor update.
+        # This makes training on GPU faster by reducing the large batch transfer time from CPU to GPU
+        for critic_step in range(FLAGS.critic_actor_ratio - 1):
+            with timer.context("sample_replay_buffer"):
+                batch = next(replay_iterator)
+
+                # we will concatenate the demo data with the online data
+                # if demo_buffer is provided
+                if demo_iterator is not None:
+                    demo_batch = next(demo_iterator)
+                    batch = concat_batches(batch, demo_batch, axis=0)
+
+            with timer.context("train_critics"):
+                agent, critics_info = agent.update_critics(
+                    batch,
+                )
 
         with timer.context("train"):
-            agent, update_info = agent.update_high_utd(batch, utd_ratio=1)
-            agent = jax.block_until_ready(agent)
+            batch = next(replay_iterator)
 
-            # publish the updated network
+            # we will concatenate the demo data with the online data
+            # if demo_buffer is provided
+            if demo_iterator is not None:
+                demo_batch = next(demo_iterator)
+                batch = concat_batches(batch, demo_batch, axis=0)
+            agent, update_info = agent.update_high_utd(batch, utd_ratio=1)
+
+        # publish the updated network
+        if step > 0 and step % (FLAGS.steps_per_update) == 0:
+            agent = jax.block_until_ready(agent)
             server.publish_network(agent.state.params)
 
         if update_steps % FLAGS.log_period == 0 and wandb_logger:
@@ -283,10 +349,14 @@ def learner(rng, agent: SACAgent, replay_buffer, replay_iterator):
 
 def load_agent(checkpoint_dir, env):
     """Load the agent from a checkpoint."""
-    agent = make_sac_agent(
-        seed=42,  # Use the same seed as training for consistency
+   
+    image_keys = [key for key in env.observation_space.keys() if key != "state"]
+    agent: DrQAgent = make_drq_agent(
+        seed=FLAGS.seed,
         sample_obs=env.observation_space.sample(),
         sample_action=env.action_space.sample(),
+        image_keys=image_keys,
+        encoder_type=FLAGS.encoder_type,
     )
     
     latest_checkpoint = checkpoints.restore_checkpoint(checkpoint_dir, target=None)
@@ -298,10 +368,11 @@ def load_agent(checkpoint_dir, env):
     
     return agent
 
-def test(checkpoint_dir, env_name="PandaPAPDirect", num_episodes=10):
+def test(checkpoint_dir, env_name="PandaPAP", num_episodes=10):
     """Evaluate the agent from a checkpoint."""
     env = gym.make(env_name, render_mode="human")
-    env = gym.wrappers.FlattenObservation(env)
+    env = SERLObsWrapper(env)
+    env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
     env = RecordEpisodeStatistics(env)
     
     agent = load_agent(checkpoint_dir, env)
@@ -310,21 +381,16 @@ def test(checkpoint_dir, env_name="PandaPAPDirect", num_episodes=10):
     eval_results = evaluate(
         policy_fn=partial(agent.sample_actions, argmax=True),
         env=env,
-        num_episodes=num_episodes,
+        num_episodes=FLAGS.eval_n_trajs,
     )
-    
     print("Evaluation Results:", eval_results)
     return eval_results
-
-
-
 ##############################################################################
 
 
 def main(_):
-    devices = jax.local_devices()
-    num_devices = len(devices)
-    sharding = jax.sharding.PositionalSharding(devices)
+    print("*****************")
+    print(num_devices)
     assert FLAGS.batch_size % num_devices == 0
 
     # seed
@@ -336,20 +402,30 @@ def main(_):
     else:
         env = gym.make(FLAGS.env)
 
-    # if FLAGS.env == "PandaPickCube-v0":
-    #     env = gym.wrappers.FlattenObservation(env)
-    env = gym.wrappers.FlattenObservation(env)
+    if FLAGS.env == "PandaPickCube-v0":
+        env = gym.wrappers.FlattenObservation(env)
+    # if FLAGS.env == "PandaPickCubeVision-v0":
+    #     env = SERLObsWrapper(env)
+    #     env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+    env = SERLObsWrapper(env)
+    env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+    
+    
+
+    image_keys = [key for key in env.observation_space.keys() if key != "state"]
 
     rng, sampling_rng = jax.random.split(rng)
-    agent: SACAgent = make_sac_agent(
+    agent: DrQAgent = make_drq_agent(
         seed=FLAGS.seed,
         sample_obs=env.observation_space.sample(),
         sample_action=env.action_space.sample(),
+        image_keys=image_keys,
+        encoder_type=FLAGS.encoder_type,
     )
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
-    agent: SACAgent = jax.device_put(
+    agent: DrQAgent = jax.device_put(
         jax.tree_map(jnp.array, agent), sharding.replicate()
     )
 
@@ -359,22 +435,54 @@ def main(_):
             env,
             capacity=FLAGS.replay_buffer_capacity,
             rlds_logger_path=FLAGS.log_rlds_path,
-            type="replay_buffer",
-            preload_rlds_path=FLAGS.preload_rlds_path,
+            type="memory_efficient_replay_buffer",
+            image_keys=image_keys,
         )
-        replay_iterator = replay_buffer.get_iterator(
-            sample_args={
-                "batch_size": FLAGS.batch_size * FLAGS.critic_actor_ratio,
-            },
-            device=sharding.replicate(),
-        )
+
+        print_green("replay buffer created")
+        print_green(f"replay_buffer size: {len(replay_buffer)}")
+
+        # if demo data is provided, load it into the demo buffer
+        # in the learner node, we support 2 ways to load demo data:
+        # 1. load from pickle file; 2. load from tf rlds data
+        if FLAGS.demo_path or FLAGS.preload_rlds_path:
+
+            def preload_data_transform(data, metadata) -> Optional[Dict[str, Any]]:
+                # NOTE: Create your own custom data transform function here if you
+                # are loading this via with --preload_rlds_path with tf rlds data
+                # This default does nothing
+                return data
+
+            demo_buffer = make_replay_buffer(
+                env,
+                capacity=FLAGS.replay_buffer_capacity,
+                type="memory_efficient_replay_buffer",
+                image_keys=image_keys,
+                preload_rlds_path=FLAGS.preload_rlds_path,
+                preload_data_transform=preload_data_transform,
+            )
+
+            if FLAGS.demo_path:
+                # Check if the file exists
+                if not os.path.exists(FLAGS.demo_path):
+                    raise FileNotFoundError(f"File {FLAGS.demo_path} not found")
+
+                with open(FLAGS.demo_path, "rb") as f:
+                    trajs = pkl.load(f)
+                    for traj in trajs:
+                        demo_buffer.insert(traj)
+
+            print(f"demo buffer size: {len(demo_buffer)}")
+        else:
+            demo_buffer = None
+
         # learner loop
         print_green("starting learner loop")
         learner(
             sampling_rng,
             agent,
             replay_buffer,
-            replay_iterator=replay_iterator,
+            demo_buffer=demo_buffer,  # None if no demo data is provided
         )
 
     elif FLAGS.actor:
@@ -390,6 +498,6 @@ def main(_):
 
 
 if __name__ == "__main__":
-    # app.run(main)
-    checkpoint_dir = "/home/robot/SERL/serl/serl_checkpoints/pap_direct/2025-03-18_09-02-45"  # 修改为你的 checkpoint 目录
-    test(checkpoint_dir)
+    app.run(main)
+    # checkpoint_dir = "/home/robot/SERL/serl/serl_checkpoints/drq"  
+    # main(checkpoint_dir)

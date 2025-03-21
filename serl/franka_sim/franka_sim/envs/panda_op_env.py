@@ -234,26 +234,26 @@ class PandaPAPGymEnv(MujocoGymEnv):
     def _compute_reward(self) -> float:
         latch_pos = self._data.sensor("latch_pos").data
         tcp_pos = self._data.sensor("2f85/pinch_pos").data
+        door_pos = self._data.sensor("door_pos").data #获取door的位置信息
+        latch_quat = self._data.sensor("latch_quat").data  # 获取门把手关节角度（弧度）
+        latch_angle_deg = np.degrees(latch_quat) # 将弧度转化为角度
+
+        # 计算距离和抓取奖励
         dist_to_latch = np.linalg.norm(latch_pos - tcp_pos)
         r_close = np.exp(-20 * dist_to_latch)
-        gripper_closed = self._data.ctrl[self._gripper_ctrl_id] > 0.5
-        r_grasp = 1.0 if (gripper_closed and dist_to_latch < 0.04) else 0.0  
-        reward = 0.2 * r_close + 0.3 * r_grasp + 0.2 * r_lift + 0.3 * r_place
-        if self._check_success():
-            reward += 5.0  # 成功时给予高奖励
+        gripper_closed = self._data.ctrl[self._gripper_ctrl_id] / 255 > 0.5
+        r_grasp = 1.0 if (gripper_closed and dist_to_latch < 0.04) else 0.0
 
-        # gripper_open = self._data.ctrl[self._gripper_ctrl_id] / 255 < 0.5
-        # latch_lifted = latch_pos[2] > self._z_init + 0.01
+        y_move = door_pos[1] - 0
+        r_y_move = np.tanh(2.0 * y_move)
 
-        # # 抓取阶段奖励
-        # reward_grasp = -dist_to_latch if gripper_open else 0.0
-        # # 放置阶段奖励
-        # reward_place = -dist_to_target if latch_lifted else 0.0
+        # 计算转动门把手的奖励（仅当转动超过40度时）
+        latch_angle_normalized = min(latch_angle_deg / 180.0, 1.0) #归一化角度
+        r_latch_angle = 0.3 * latch_angle_normalized #降低放大倍数
 
-        # 成功放置奖励
-        # reward_success = 10.0 if self._check_success() else 0.0
+        # 组合奖励
+        reward = 0.1 * r_close + 0.2 * r_grasp + 0.4 * r_y_move + 0.3 * r_latch_angle
 
-        # reward = 0.5 * reward_grasp + 0.5 * reward_place + reward_success
         return reward
 
     def _check_success(self) -> bool:

@@ -302,7 +302,7 @@ def load_agent(checkpoint_dir, env):
     
     return agent
 
-def test(checkpoint_dir, env_name="PandaPAPDirect", num_episodes=10):
+def test(checkpoint_dir, env_name="PandaPAP", num_episodes=20):
     """Evaluate the agent from a checkpoint."""
     env = gym.make(env_name, render_mode="human")
     env = gym.wrappers.FlattenObservation(env)
@@ -326,6 +326,8 @@ def main(_):
     devices = jax.local_devices()
     num_devices = len(devices)
     sharding = jax.sharding.PositionalSharding(devices)
+    print("++++++++++++++++++++++++++")
+    print(num_devices)
     assert FLAGS.batch_size % num_devices == 0
 
     # seed
@@ -392,5 +394,5 @@ def main(_):
 
 if __name__ == "__main__":
     app.run(main)
-    # checkpoint_dir = "/home/robot/SERL/serl/serl_checkpoints/pap"  
+    # checkpoint_dir = "/home/robot/SERL/serl/checkpoints/pap/2025-03-19_10-15-58"  
     # test(checkpoint_dir)

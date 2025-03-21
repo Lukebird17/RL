@@ -3,10 +3,11 @@
 # use the default values if the env variables are not set
 EXAMPLE_DIR=${EXAMPLE_DIR:-"examples/async_drq_sim"}
 CONDA_ENV=${CONDA_ENV:-"serl"}
-export CUDA_HOME=/usr/local/cuda-12:$CUDA_HOME 
-export PATH=/usr/local/cuda-12:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda-12/lib64:$LD_LIBRARY_PATH
-
+export CUDA_HOME=/usr/local/cuda-12.0:$CUDA_HOME 
+export PATH=/usr/local/cuda-12.0:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-12.0/lib64:$LD_LIBRARY_PATH
+export WANDB_API_KEY="afb9ea51b9652834c2840be8f209de8b38bebc34"
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,7
 cd $EXAMPLE_DIR
 echo "Running from $(pwd)"
 

@@ -389,6 +389,8 @@ def test(checkpoint_dir, env_name="PandaPAP", num_episodes=10):
 
 
 def main(_):
+    print("*****************")
+    print(num_devices)
     assert FLAGS.batch_size % num_devices == 0
 
     # seed

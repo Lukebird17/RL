@@ -48,14 +48,16 @@
     <light pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular=".3 .3 .3"/>
     <light pos="0 -.5 .4" mode="targetbodycom" target="block" diffuse=".8 .8 .8" specular=".3 .3 .3"/>
     <geom name="floor" size="3 3 0.01" type="plane" material="grid"/>
-    <body name="block" pos="0.35 0.1 .5">  <freejoint name="block"/>
+    <body name="block" pos="0.35 0.2 .5">  <freejoint name="block"/>
       <geom name="block" type="box" size=".02 .02 .02" mass="0.1" rgba=".6 .3 .6 1" contype="1" conaffinity="1" group="1"/>
     </body>
     <body name="target" pos=".15 0 .5" quat="0 1 0 0" mocap="true">
       <geom name="target" type="box" size=".03 .03 .03" contype="0" conaffinity="0" rgba=".6 .3 .3 0"/>
     </body>
-
-    <body name="plate" pos=".2 -0.4 0.">
+    <body name="table" pos="0.2 -0.4 .1">  
+      <geom name="table" type="box" size=".09 .09 .1" mass="0.1" rgba=".0 .3 .6 1" contype="1" conaffinity="1" group="1"/>
+    </body>
+    <body name="plate" pos=".2 -0.4 0.2">
       <geom material="material_0" mesh="model" type="mesh" contype="2" conaffinity="2" group="2"/>
       <geom mesh="model_collision_0" type="mesh" group="3"/>
       <geom mesh="model_collision_1" type="mesh" group="3"/>
@@ -91,27 +93,7 @@
       <geom mesh="model_collision_31" type="mesh" group="3"/>
     </body>
 
-    
-    
-
-
-     <!-- <body euler="45 -15 0" pos="0 0 1">
-      <geom type="sdf" name="bowl" mesh="bowl" rgba=".2 .8 .8 1">
-        <plugin instance="bowl"/>
-      </geom>
-    </body>
-    <body pos=".6 -.4 2.5">
-      <freejoint/>
-      <geom type="sphere" size=".15" rgba=".8 .17 .15 1"/>
-    </body>
-    <body pos="0 -.4 2.5">
-      <freejoint/>
-      <geom type="sphere" size=".15" rgba=".8 .17 .15 1"/>
-    </body>
-    <body pos=".3 -.4 2.5">
-      <freejoint/>
-      <geom type="sphere" size=".15" rgba=".8 .17 .15 1"/>
-    </body> -->
+  
   </worldbody>
 
   <sensor>

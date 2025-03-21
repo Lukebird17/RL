@@ -132,8 +132,8 @@ class PandaPAPGymEnv(MujocoGymEnv):
         )
 
         from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
-        if not glfw.init(): #添加glfw初始化
-            raise RuntimeError("GLFW initialization failed")
+        # if not glfw.init(): #添加glfw初始化
+        #     raise RuntimeError("GLFW initialization failed")
         self._viewer = MujocoRenderer(
             self.model, self.data, width=128, height=128
         )
@@ -235,29 +235,22 @@ class PandaPAPGymEnv(MujocoGymEnv):
         block_pos = self._data.sensor("block_pos").data
         tcp_pos = self._data.sensor("2f85/pinch_pos").data
         dst_pos = self._data.sensor("dst_pos").data
-        dist_to_block = np.linalg.norm(block_pos - tcp_pos)
-        r_close = np.exp(-20 * dist_to_block)
-        gripper_closed = self._data.ctrl[self._gripper_ctrl_id] > 0.5
-        r_grasp = 1.0 if (gripper_closed and dist_to_block < 0.04) else 0.0  
-        r_lift = np.clip((block_pos[2] - self._z_init) / (dst_pos[2] - self._z_init), 0, 1)
-        dist_to_target = np.linalg.norm(block_pos - dst_pos)
-        r_place = 1.0 if dist_to_target < 0.04 else 0.0 
-        reward = 0.2 * r_close + 0.3 * r_grasp + 0.2 * r_lift + 0.3 * r_place
+        # dist_to_block = np.linalg.norm(block_pos - tcp_pos)
+        # r_close = np.exp(-20 * dist_to_block)
+        reward = 0
+        # gripper_closed = self._data.ctrl[self._gripper_ctrl_id] / 255 > 0.5
+        # r_grasp = 1.0 if (gripper_closed and dist_to_block < 0.04) else 0.0  
+
+        # r_lift = np.clip((block_pos[2] - self._z_init) / (dst_pos[2] - self._z_init), 0, 1)
+
+        # dist_to_target = np.linalg.norm(block_pos - dst_pos)
+        # r_place = 1.0 if dist_to_target < 0.04 else 0.0 
+
+        # reward = 0.2 * r_close + 0.3 * r_grasp + 0.2 * r_lift + 0.3 * r_place
         if self._check_success():
             reward += 5.0  # 成功时给予高奖励
-
-        # gripper_open = self._data.ctrl[self._gripper_ctrl_id] / 255 < 0.5
-        # block_lifted = block_pos[2] > self._z_init + 0.01
-
-        # # 抓取阶段奖励
-        # reward_grasp = -dist_to_block if gripper_open else 0.0
-        # # 放置阶段奖励
-        # reward_place = -dist_to_target if block_lifted else 0.0
-
-        # 成功放置奖励
-        # reward_success = 10.0 if self._check_success() else 0.0
-
-        # reward = 0.5 * reward_grasp + 0.5 * reward_place + reward_success
+        else:
+            reward += 0
         return reward
 
     def _check_success(self) -> bool:

@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # use the default values if the env variables are not set
-EXAMPLE_DIR=${EXAMPLE_DIR:-"examples/async_drq_sim"}
+EXAMPLE_DIR=${EXAMPLE_DIR:-"examples/async_drq_pap_sim"}
 CONDA_ENV=${CONDA_ENV:-"serl"}
 export CUDA_HOME=/usr/local/cuda-12.0:$CUDA_HOME 
 export PATH=/usr/local/cuda-12.0:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda-12.0/lib64:$LD_LIBRARY_PATH
 export WANDB_API_KEY="afb9ea51b9652834c2840be8f209de8b38bebc34"
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,7
+export CUDA_VISIBLE_DEVICES=0,4,5,7
 cd $EXAMPLE_DIR
 echo "Running from $(pwd)"
 
@@ -25,19 +25,19 @@ if [ ! -f "$FILE" ]; then
 fi
 
 # Create a new tmux session
-tmux new-session -d -s serl_drq_session
+tmux new-session -d -s serl_drq_pap_session
 
 # Split the window vertically
 tmux split-window -v
 
 # Navigate to the activate the conda environment in the first pane
-tmux send-keys -t serl_drq_session:0.0 "conda activate $CONDA_ENV && bash run_actor.sh" C-m
+tmux send-keys -t serl_drq_pap_session:0.0 "conda activate $CONDA_ENV && bash run_actor.sh" C-m
 
 # Navigate to the activate the conda environment in the second pane
-tmux send-keys -t serl_drq_session:0.1 "conda activate $CONDA_ENV && bash run_learner.sh" C-m
+tmux send-keys -t serl_drq_pap_session:0.1 "conda activate $CONDA_ENV && bash run_learner.sh" C-m
 
 # Attach to the tmux session
-tmux attach-session -t serl_drq_session
+tmux attach-session -t serl_drq_pap_session
 
 # kill the tmux session by running the following command
 # tmux kill-session -t serl_session
